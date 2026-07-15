@@ -1,0 +1,14 @@
+# Rosbag mentah & hasil recovery (file 1-4 GB, di atas batas 100 MB GitHub)
+rosbags/
+recovered/
+*.db3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

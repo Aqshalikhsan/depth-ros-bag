@@ -168,9 +168,3 @@ rekam ke media exFAT atau ext4.
 | `batang_distance.launch.py` | Launch file deployment (jalankan node + parameter)     |
 | `models/batang-best.pt` | Model YOLO deteksi batang                                  |
 
-## Batasan
-
-- Metode `K/w` mengasumsikan diameter batang relatif seragam.
-- Lensa wide/fisheye belum dikoreksi; estimasi di tepi frame cenderung bias.
-- Deteksi berhasil pada ~50–58% frame (sisanya batang terhalang, di tepi, atau jauh).
-- Akurasi lintas jarak belum divalidasi terhadap ground truth berjenjang.

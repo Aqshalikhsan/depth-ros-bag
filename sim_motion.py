@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Simulasi vision-only motion/looming: jarak relatif + meter(asumsi) + TTC.
 
-Memakai MotionDistanceEstimator (melacak 1 batang). Tidak menimpa sim_realtime.py.
+Memakai MotionDistanceEstimator (melacak 1 batang).
 
 Contoh:
   python3 sim_motion.py <bag_atau_.db3> -o out/motion --every 5 --K-nom 193.5

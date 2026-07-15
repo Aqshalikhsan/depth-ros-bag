@@ -12,7 +12,7 @@ Estimasi jarak saat drone mendekati batang (simulasi dari rosbag, `Z = K/w`):
 | | |
 |---|---|
 | ![Rekaman 11:46](out/sim_1146/approach.gif) | ![Rekaman 11:49](out/sim_1149/approach.gif) |
-| ![Rekaman 11:53](out/sim_1153/approach.gif) | ![Rekaman 12:03](out/sim_12_03_27/approach.gif) |
+| ![Rekaman 11:53](out/sim_1153/approach.gif) | ![Rekaman 12:03](out/sim_12_03_27/approach_contoh.gif) |
 
 ## Rumus
 

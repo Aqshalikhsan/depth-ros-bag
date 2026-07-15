@@ -5,6 +5,15 @@ tanpa depth sensor, stereo, maupun LiDAR. Deteksi batang memakai YOLO
 (`models/batang-best.pt`, kelas `batang_sawit`); jarak dihitung secara geometri
 dari lebar bounding box. Tidak menggunakan jaringan estimasi kedalaman.
 
+## Demonstrasi
+
+Estimasi jarak saat drone mendekati batang (simulasi dari rosbag, `Z = K/w`):
+
+| | |
+|---|---|
+| ![Rekaman 11:46](out/sim_1146/approach.gif) | ![Rekaman 11:49](out/sim_1149/approach.gif) |
+| ![Rekaman 11:53](out/sim_1153/approach.gif) | ![Rekaman 12:03](out/sim_12_03_27/approach.gif) |
+
 ## Rumus
 
 Model kamera lubang jarum untuk objek berukuran nyata `W` (meter) pada jarak `Z`

@@ -1,4 +1,4 @@
-# Estimasi Jarak Drone–Batang Sawit (Monokular)
+# Estimasi Jarak Drone
 
 Estimasi jarak drone ke batang kelapa sawit dari satu kamera RGB (monokular),
 tanpa depth sensor, stereo, maupun LiDAR. Deteksi batang memakai YOLO
@@ -153,15 +153,6 @@ Alternatif `ros2 run <paket> <node>`: bungkus berkas menjadi paket ament_python
 (`package.xml` + `setup.py` dengan entry point), lalu `colcon build`. Cara langsung
 dan launch di atas tidak memerlukan build.
 
-## Recovery bag terpotong
-
-Sebagian rekaman terpotong tepat pada 4 GB (batas berkas FAT32 saat perekaman).
-Bagian sebelum titik potong masih dapat diselamatkan:
-
-    sqlite3 <bag_rusak>.db3 ".recover" | sqlite3 recovered/rec.db3
-
-Hasilnya dipakai sebagai input pada perintah di atas. Untuk mencegah hal serupa,
-rekam ke media exFAT atau ext4.
 
 ## Struktur berkas
 

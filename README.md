@@ -85,35 +85,64 @@ Keluaran `out/motion/motion.csv`:
 - `z_m_assumed`  — meter dengan skala asumsi (nilai absolut bergantung `K_nom`)
 - `ttc_s`        — time-to-contact (detik, tanpa skala)
 
-## Deployment ROS2 (di drone)
+## Deployment ROS2 (drone, kamera live)
 
-Gunakan `python3` sistem yang menyertakan `rclpy` (dari instalasi ROS2), bukan
-virtualenv terpisah.
+Bagian ini untuk operasi nyata di drone dengan kamera langsung, bukan pemutaran
+rosbag. Node estimator bekerja pada topik kamera live; rosbag hanya dipakai untuk
+`sim_realtime.py`/`sim_motion.py` (uji offline).
 
-Berkas yang diperlukan di drone: `ros2_batang_node.py`, `batang_estimator.py`,
-`models/batang-best.pt`.
+Alur data:
+
+    [driver kamera] --/camera_front--> [ros2_batang_node] --/batang/distance--> [konsumen]
+                        (Image bgr8)                          (Float32, meter)     (avoidance / FC)
+
+Driver kamera (usb_cam, v4l2_camera, gscam, atau node sendiri) dijalankan terpisah
+dan harus mem-publish topik `sensor_msgs/Image`. Node ini yang mengonsumsinya.
+
+Prasyarat. Gunakan `python3` sistem yang menyertakan `rclpy` (dari instalasi
+ROS2), bukan virtualenv terpisah. Salin ke drone: `ros2_batang_node.py`,
+`batang_estimator.py`, `batang_distance.launch.py`, `models/batang-best.pt`.
 
     source /opt/ros/humble/setup.bash        # sesuaikan distro
     sudo apt install ros-humble-cv-bridge
     pip3 install ultralytics
 
-    python3 ros2_batang_node.py --ros-args -p K:=193.5 -p model:=models/batang-best.pt
+Menjalankan (pilih salah satu):
 
-Node:
+    # a. Langsung
+    python3 ros2_batang_node.py --ros-args -p K:=193.5
 
-- subscribe : `/camera_front` (`sensor_msgs/Image`, bgr8)
+    # b. Via launch (parameter lebih ringkas)
+    ros2 launch batang_distance.launch.py K:=193.5
+
+Bila topik kamera drone bukan `/camera_front`, arahkan ulang:
+
+    ros2 launch batang_distance.launch.py image_topic:=/kamera/image_raw K:=193.5
+
+Antarmuka node:
+
+- subscribe : `image_topic` (default `/camera_front`, `sensor_msgs/Image` bgr8)
 - publish    : `/batang/distance` (`std_msgs/Float32`, meter)
-- publish    : `/batang/detection_image` (debug, bounding box + jarak)
+- publish    : `/batang/detection_image` (debug: bounding box + jarak)
 
-Verifikasi:
+Parameter: `image_topic`, `model`, `K`, `conf`, `select` (`largest`|`center`),
+`publish_debug_image`.
 
-    ros2 topic echo /batang/distance
-    ros2 topic hz /batang/distance
+Verifikasi saat drone menyala:
 
-Untuk kinerja real-time pada Jetson, ekspor model ke TensorRT sekali:
+    ros2 topic list                     # pastikan topik kamera tampil
+    ros2 topic echo /batang/distance    # nilai meter keluar saat batang terlihat
+    ros2 topic hz /batang/distance      # laju publikasi
+
+Kinerja real-time pada Jetson: ekspor model ke TensorRT sekali, lalu jalankan
+dengan engine tersebut.
 
     yolo export model=models/batang-best.pt format=engine half=True
-    # lalu jalankan dengan -p model:=models/batang-best.engine
+    python3 ros2_batang_node.py --ros-args -p model:=models/batang-best.engine
+
+Alternatif `ros2 run <paket> <node>`: bungkus berkas menjadi paket ament_python
+(`package.xml` + `setup.py` dengan entry point), lalu `colcon build`. Cara langsung
+dan launch di atas tidak memerlukan build.
 
 ## Recovery bag terpotong
 
@@ -135,7 +164,8 @@ rekam ke media exFAT atau ext4.
 | `sim_realtime.py`     | Simulasi real-time metode metrik (video + CSV)               |
 | `motion_estimator.py` | Estimator tanpa skala: `z_rel` + TTC + meter asumsi          |
 | `sim_motion.py`       | Simulasi metode motion (video + CSV)                         |
-| `ros2_batang_node.py` | Node ROS2 untuk drone                                        |
+| `ros2_batang_node.py` | Node ROS2 untuk drone (kamera live)                          |
+| `batang_distance.launch.py` | Launch file deployment (jalankan node + parameter)     |
 | `models/batang-best.pt` | Model YOLO deteksi batang                                  |
 
 ## Batasan

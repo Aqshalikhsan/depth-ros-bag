@@ -1,183 +1,146 @@
-# Estimasi Jarak Drone → Batang Sawit (Monokular, Vision-Only)
+# Estimasi Jarak Drone–Batang Sawit (Monokular)
 
-Estimasi jarak drone ke batang sawit **hanya dari kamera** (monokular RGB), tanpa
-depth sensor / stereo / LiDAR. Dipakai untuk berjalan **real-time saat drone terbang**.
+Estimasi jarak drone ke batang kelapa sawit dari satu kamera RGB (monokular),
+tanpa depth sensor, stereo, maupun LiDAR. Deteksi batang memakai YOLO
+(`models/batang-best.pt`, kelas `batang_sawit`); jarak dihitung secara geometri
+dari lebar bounding box. Tidak menggunakan jaringan estimasi kedalaman.
 
-## Cara kerja (ringkas)
+## Rumus
 
-Model pinhole + ukuran objek diketahui:
+Model kamera lubang jarum untuk objek berukuran nyata `W` (meter) pada jarak `Z`
+(meter) yang terproyeksi selebar `w` piksel:
 
-```
-Z (meter) = K / lebar_bbox_px          K = f · W  (dikalibrasi sekali)
-```
+    w = f · W / Z            →      Z = f · W / w
 
-- YOLO (`models/batang-best.pt`) mendeteksi batang → ambil **lebar** bounding box (px).
-- `K` dikalibrasi sekali dari scene diam ber-ground-truth (hover ~3 m). **K ≈ 193.5**.
-- Hasil di-**filter median** agar stabil saat terbang.
-- **Bukan depth-net** — murni geometri, jadi ringan & real-time.
+Fokus `f` (piksel) dan lebar batang `W` sama-sama tidak diketahui namun konstan,
+sehingga digabung menjadi satu konstanta `K = f · W`:
 
-> Batasan: mengasumsikan diameter batang ~konstan & lensa rektilinear. Lensa FPV
-> wide belum di-undistort → estimasi di tepi frame agak bias.
+    Z = K / w
 
----
+Turunan yang dipakai program:
 
-## 1. Setup (mesin analisis / laptop)
+| Besaran            | Rumus                    | Keterangan                                  |
+|--------------------|--------------------------|---------------------------------------------|
+| Kalibrasi K        | `K = Z_gt · w_gt`        | dari satu scene ber–ground truth            |
+| Jarak metrik       | `Z = K / w`              | butuh K (butuh GT atau nilai asumsi)        |
+| Jarak relatif      | `Z_rel = w_ref / w`      | tanpa skala; 1.0 di awal, mengecil saat dekat |
+| Time-to-contact    | `TTC = w / (dw/dt)`      | detik; tanpa skala                          |
 
-Tanpa venv (pakai user-site). Paket kunci:
+Catatan: monokular pasif bersifat ambigu skala. Nilai dalam meter selalu
+memerlukan satu referensi metrik (GT jarak, atau `K` asumsi). Jarak relatif dan
+TTC tidak memerlukannya.
 
-```bash
-sudo apt install -y python3-opencv ffmpeg sqlite3
-pip3 install --user "numpy<2" ultralytics        # numpy<2 wajib: cocok dgn opencv apt
-# torch + CUDA diasumsikan sudah ada
-```
+## Instalasi
 
-Cek:
-```bash
-python3 -c "import cv2, numpy, torch, ultralytics; print('OK', torch.cuda.is_available())"
-```
+    sudo apt install -y python3-opencv ffmpeg sqlite3
+    pip3 install --user "numpy<2" ultralytics
 
-> `numpy<2` penting: opencv apt (4.5.4) tidak kompatibel numpy 2.x.
+`numpy<2` diperlukan agar kompatibel dengan OpenCV dari apt. Torch/CUDA diasumsikan
+sudah terpasang. Verifikasi:
 
----
+    python3 -c "import cv2, numpy, torch, ultralytics"
 
-## 2. Ekstrak frame dari rosbag (.db3)
+## Data
 
-Membaca ROS2 bag langsung via SQLite + parser CDR Image (tanpa perlu ROS terpasang).
+Rekaman berupa ROS2 bag (`.db3`) dengan satu topik `/camera_front`
+(`sensor_msgs/Image`, `bgr8`, 640x360, ~30 fps). Program membaca `.db3` langsung
+via SQLite tanpa memerlukan ROS terpasang.
 
-```bash
-python3 extract_frames.py <bag_dir_atau_.db3> -o frames/ --step 30
-# --step 30 = ~1 frame/detik (kamera 30fps). --step 1 = semua frame.
-```
+## Penggunaan
 
----
+### Kasus A — ground truth diketahui
 
-## 3. Deteksi + estimasi jarak (batch/analisis)
+Kalibrasi `K` dari satu frame diam yang jaraknya diketahui, lalu estimasi metrik.
 
-```bash
-# lihat deteksi & lebar bbox dulu (belum kalibrasi):
-python3 detect_batang.py <bag> -o out/ --step 15 --save-vis
+    # 1. Ekstrak frame untuk menentukan frame kalibrasi
+    python3 extract_frames.py <bag> -o frames/ --step 30
 
-# kalibrasi K dari frame diem ber-GT (mis. frame 2400 = 3 m):
-python3 detect_batang.py <bag> -o out/ --step 15 --calib-frame 2400 --calib-dist 3.0
+    # 2. Kalibrasi (mis. frame 2400 berjarak 3.0 m) + estimasi seluruh rekaman
+    python3 detect_batang.py <bag> -o out/ --step 15 --calib-frame 2400 --calib-dist 3.0
 
-# atau langsung pakai K yang sudah diketahui:
-python3 detect_batang.py <bag> -o out/ --step 15 --K 193.5
-```
-Keluaran: `out/detections.csv` (kolom `Z_est_m`) + `out/vis/` (frame teranotasi).
+    # Jika K sudah diketahui dari kalibrasi sebelumnya:
+    python3 detect_batang.py <bag> -o out/ --step 15 --K 193.5
 
----
+Keluaran: `out/detections.csv` (kolom `Z_est_m`) dan `out/vis/` bila `--save-vis`.
 
-## 4. Simulasi real-time (validasi offline + video)
+Simulasi real-time (memutar rekaman melalui estimator, menghasilkan video):
 
-Memutar ulang bag lewat estimator seolah live → **membuktikan perilaku runtime**
-yang sama dengan node drone. Menghasilkan video + CSV jarak per frame.
+    python3 sim_realtime.py <bag> -o out/sim/ --every 5 --K 193.5
 
-```bash
-python3 sim_realtime.py <bag> -o out/sim/ --every 5 --K 193.5 --select largest
-```
-Keluaran:
-- `out/sim/realtime.mp4` (mp4v, mentah)
-- `out/sim/realtime_h264.mp4` ← **buka ini** di VLC / browser (kompatibel)
-- `out/sim/realtime.csv` (raw_z, z_filt, w_px, conf)
+Menghasilkan `out/sim/realtime_h264.mp4` dan `realtime.csv`.
 
-GIF preview (bisa dilihat inline di VSCode):
-```bash
-ffmpeg -y -i out/sim/realtime.mp4 -vf "select='between(n,105,185)',setpts=N/15/TB,scale=480:-1" -an out/sim/approach.gif
-```
+Nilai kalibrasi saat ini: `K ≈ 193.5` (dari scene hover 3.0 m; lebar batang 64.5 px).
 
----
+### Kasus B — ground truth tidak diketahui
 
-## 4b. Estimasi vision-only: jarak relatif + TTC (tanpa GT, tanpa skala)
+Melacak satu batang dan memakai pertumbuhan lebar bbox. Keluaran utama adalah
+jarak relatif dan TTC (keduanya tanpa skala); nilai meter tetap ditampilkan
+dengan skala asumsi `K_nom` dan diberi label `*`.
 
-Metode alternatif berbasis **motion/looming** — melacak SATU batang dan memakai
-pertumbuhan lebar bbox. Berguna saat GT tidak diketahui / drone bergerak acak.
+    python3 sim_motion.py <bag> -o out/motion/ --every 5 --K-nom 193.5
 
-```bash
-python3 sim_motion.py <bag_atau_.db3> -o out/motion/ --every 5 --K-nom 193.5
-```
+Keluaran `out/motion/motion.csv`:
 
-Output (`out/motion/motion.csv` + video):
+- `z_rel`        — jarak relatif terhadap awal pelacakan (eksak, tanpa skala)
+- `z_m_assumed`  — meter dengan skala asumsi (nilai absolut bergantung `K_nom`)
+- `ttc_s`        — time-to-contact (detik, tanpa skala)
 
-| Kolom | Arti | Sifat |
-|---|---|---|
-| `z_rel` | jarak relatif thd awal track (1.0 → mengecil saat mendekat) | **eksak, vision-only, tanpa skala** |
-| `z_m_assumed` | meter = `K_nom / w` | **asumsi skala** (identik `K/w`; nilai absolut tergantung `K_nom`) |
-| `ttc_s` | time-to-contact = `w / (dw/dt)` detik | **murni vision-only**, tapi noisy (perlu smoothing) |
+## Deployment ROS2 (di drone)
 
-> Fisika: untuk 1 batang, `w(t)` saja sudah menentukan jarak relatif. Angka meter
-> tak bisa lebih akurat dari `K/w` tanpa sumber skala metrik (Δ gerak drone).
-> Yang benar-benar bebas-skala: `z_rel` dan `ttc_s`.
+Gunakan `python3` sistem yang menyertakan `rclpy` (dari instalasi ROS2), bukan
+virtualenv terpisah.
 
----
-
-## 5. Recovery rosbag terpotong (batas FAT32 4 GB)
-
-Sebagian bag terpotong tepat di 4 GB (`4294967295` byte) karena batas file FAT32
-saat perekaman. ~4 GB pertama masih bisa diselamatkan:
-
-```bash
-sqlite3 <bag_korup>.db3 ".recover" | sqlite3 recovered/rec_xxx.db3
-```
-Lalu pakai `recovered/rec_xxx.db3` sebagai input di langkah 2–4.
-
-> Cegah ke depan: rekam ke SD card **exFAT/ext4**, jangan FAT32.
-
----
-
-## 6. Deploy ke drone (ROS2)
-
-**Pakai python3 sistem yang punya `rclpy` (dari ROS2), BUKAN venv.**
-
-File yang perlu di-copy ke drone: `ros2_batang_node.py`, `batang_estimator.py`,
+Berkas yang diperlukan di drone: `ros2_batang_node.py`, `batang_estimator.py`,
 `models/batang-best.pt`.
 
-```bash
-source /opt/ros/humble/setup.bash          # sesuaikan distro (humble/iron/jazzy)
-sudo apt install ros-humble-cv-bridge
-pip3 install ultralytics
+    source /opt/ros/humble/setup.bash        # sesuaikan distro
+    sudo apt install ros-humble-cv-bridge
+    pip3 install ultralytics
 
-# jalankan (cara langsung, paling simpel):
-python3 ros2_batang_node.py --ros-args -p K:=193.5 -p model:=models/batang-best.pt
-```
+    python3 ros2_batang_node.py --ros-args -p K:=193.5 -p model:=models/batang-best.pt
 
 Node:
-- **subscribe** `/camera_front` (sensor_msgs/Image, bgr8)
-- **publish** `/batang/distance` (std_msgs/Float32, meter)
-- **publish** `/batang/detection_image` (debug, bbox+jarak)
 
-Cek:
-```bash
-ros2 topic echo /batang/distance
-ros2 topic hz /batang/distance
-```
+- subscribe : `/camera_front` (`sensor_msgs/Image`, bgr8)
+- publish    : `/batang/distance` (`std_msgs/Float32`, meter)
+- publish    : `/batang/detection_image` (debug, bounding box + jarak)
 
-**Real-time di Jetson** → ekspor TensorRT sekali:
-```bash
-yolo export model=models/batang-best.pt format=engine half=True
-python3 ros2_batang_node.py --ros-args -p model:=models/batang-best.engine
-```
+Verifikasi:
 
-Parameter node: `model`, `K`, `conf`, `select` (`largest`|`center`),
-`image_topic`, `publish_debug_image`.
+    ros2 topic echo /batang/distance
+    ros2 topic hz /batang/distance
 
----
+Untuk kinerja real-time pada Jetson, ekspor model ke TensorRT sekali:
 
-## Struktur file
+    yolo export model=models/batang-best.pt format=engine half=True
+    # lalu jalankan dengan -p model:=models/batang-best.engine
 
-| File | Fungsi |
-|---|---|
-| `extract_frames.py` | Ekstrak frame dari .db3 (parser CDR, tanpa ROS) |
-| `detect_batang.py` | Deteksi + kalibrasi K + CSV jarak (analisis) |
-| `batang_estimator.py` | Inti runtime: deteksi → pilih target → `Z=K/w` → filter median |
-| `sim_realtime.py` | Simulasi real-time offline (video + CSV) |
-| `motion_estimator.py` | Estimator vision-only: lacak 1 batang → `z_rel` + meter(asumsi) + TTC |
-| `sim_motion.py` | Simulasi motion/looming (video + CSV) |
-| `ros2_batang_node.py` | Node ROS2 untuk drone |
-| `models/batang-best.pt` | Model YOLO (kelas: `batang_sawit`) |
+## Recovery bag terpotong
 
-## Status validasi
+Sebagian rekaman terpotong tepat pada 4 GB (batas berkas FAT32 saat perekaman).
+Bagian sebelum titik potong masih dapat diselamatkan:
 
-- Scene hover 3 m: estimasi **3.00 m** (std 0.13 m). ✅
-- `K=193.5` transfer wajar antar-rekaman berbeda.
-- Coverage deteksi ~50–58% (separuh frame tanpa deteksi).
-- **Belum** ada GT multi-jarak → akurasi lintas rentang belum tervalidasi.
+    sqlite3 <bag_rusak>.db3 ".recover" | sqlite3 recovered/rec.db3
+
+Hasilnya dipakai sebagai input pada perintah di atas. Untuk mencegah hal serupa,
+rekam ke media exFAT atau ext4.
+
+## Struktur berkas
+
+| Berkas                | Fungsi                                                        |
+|-----------------------|--------------------------------------------------------------|
+| `extract_frames.py`   | Ekstraksi frame dari `.db3` (parser CDR, tanpa ROS)          |
+| `detect_batang.py`    | Deteksi, kalibrasi K, estimasi metrik (batch)                |
+| `batang_estimator.py` | Inti runtime: deteksi → `Z = K/w` → filter median            |
+| `sim_realtime.py`     | Simulasi real-time metode metrik (video + CSV)               |
+| `motion_estimator.py` | Estimator tanpa skala: `z_rel` + TTC + meter asumsi          |
+| `sim_motion.py`       | Simulasi metode motion (video + CSV)                         |
+| `ros2_batang_node.py` | Node ROS2 untuk drone                                        |
+| `models/batang-best.pt` | Model YOLO deteksi batang                                  |
+
+## Batasan
+
+- Metode `K/w` mengasumsikan diameter batang relatif seragam.
+- Lensa wide/fisheye belum dikoreksi; estimasi di tepi frame cenderung bias.
+- Deteksi berhasil pada ~50–58% frame (sisanya batang terhalang, di tepi, atau jauh).
+- Akurasi lintas jarak belum divalidasi terhadap ground truth berjenjang.
